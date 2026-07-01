@@ -17,6 +17,7 @@ import type { SelectedIngredient } from "@/components/meal-creator"
 import type { SavedMeal } from "@/components/saved-meals"
 
 interface DashboardOverviewProps {
+  userName?: string
   totals: FatTotals
   fullTotals: FatTotals
   portionPercent: number
@@ -49,6 +50,7 @@ function mealStatusLabel(fat: number): { label: string; className: string } {
 }
 
 export function DashboardOverview({
+  userName,
   totals,
   fullTotals,
   portionPercent,
@@ -65,6 +67,13 @@ export function DashboardOverview({
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
+      {userName && (
+        <p className="text-sm text-muted-foreground">
+          Welcome back, <span className="font-medium text-foreground">{userName}</span>. Here is
+          how your meal is looking today.
+        </p>
+      )}
+
       <div className="flex items-start gap-2 rounded-xl bg-[oklch(0.94_0.04_155)] border border-[oklch(0.82_0.08_155)] px-4 py-3">
         <Info size={15} className="shrink-0 mt-0.5 text-primary" aria-hidden="true" />
         <p className="text-xs text-foreground leading-relaxed">

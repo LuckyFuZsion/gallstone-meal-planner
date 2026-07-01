@@ -8,6 +8,9 @@ import { FatTrackerCard } from "@/components/fat-tracker-card"
 import { MealCreator, type SelectedIngredient } from "@/components/meal-creator"
 import { SavedMeals, DEFAULT_MEALS, type MealIngredient, type SavedMeal } from "@/components/saved-meals"
 import { MealPortionSelector } from "@/components/meal-portion-selector"
+import { WelcomeDialog } from "@/components/welcome-dialog"
+import { SettingsPanel } from "@/components/settings-panel"
+import { RandomMealIdeas } from "@/components/random-meal-ideas"
 import {
   applyPortionToTotals,
   computeItemNutrition,
@@ -17,15 +20,15 @@ import {
   resolvePortionPercent,
   type PortionPreset,
 } from "@/lib/nutrition"
+import type { CookingMethodPreference } from "@/lib/types/recipe"
 import {
   clearMealDraft,
-  DEFAULT_TRIGGER_FOODS,
   loadMealDraft,
   loadSavedMeals,
-  loadTriggerFoods,
+  loadUserName,
   saveMealDraft,
   saveSavedMeals,
-  saveTriggerFoods,
+  saveUserName,
 } from "@/lib/app-storage"
 
 export default function DashboardPage() {
@@ -33,10 +36,13 @@ export default function DashboardPage() {
   const [selected, setSelected] = useState<SelectedIngredient[]>([])
   const [cookingFat, setCookingFat] = useState(false)
   const [digestiveTriggers, setDigestiveTriggers] = useState(false)
+  const [cookingMethod, setCookingMethod] = useState<CookingMethodPreference>("auto")
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>(DEFAULT_MEALS)
   const [portionPreset, setPortionPreset] = useState<PortionPreset>("whole")
   const [customPortionPercent, setCustomPortionPercent] = useState(100)
   const [storageReady, setStorageReady] = useState(false)
+  const [userName, setUserName] = useState("")
+  const [showWelcome, setShowWelcome] = useState(false)
 
   useEffect(() => {
     const storedMeals = loadSavedMeals()
@@ -47,8 +53,16 @@ export default function DashboardPage() {
       setSelected(draft.selected)
       setCookingFat(draft.cookingFat)
       setDigestiveTriggers(draft.digestiveTriggers)
+      setCookingMethod(draft.cookingMethod)
       setPortionPreset(draft.portionPreset)
       setCustomPortionPercent(draft.customPortionPercent)
+    }
+
+    const storedName = loadUserName()
+    if (storedName) {
+      setUserName(storedName)
+    } else {
+      setShowWelcome(true)
     }
 
     setStorageReady(true)
@@ -66,6 +80,7 @@ export default function DashboardPage() {
       selected.length === 0 &&
       !cookingFat &&
       !digestiveTriggers &&
+      cookingMethod === "auto" &&
       portionPreset === "whole" &&
       customPortionPercent === 100
 
@@ -78,6 +93,7 @@ export default function DashboardPage() {
       selected,
       cookingFat,
       digestiveTriggers,
+      cookingMethod,
       portionPreset,
       customPortionPercent,
     })
@@ -85,6 +101,7 @@ export default function DashboardPage() {
     selected,
     cookingFat,
     digestiveTriggers,
+    cookingMethod,
     portionPreset,
     customPortionPercent,
     storageReady,
@@ -115,6 +132,7 @@ export default function DashboardPage() {
     setSelected([])
     setCookingFat(false)
     setDigestiveTriggers(false)
+    setCookingMethod("auto")
     setPortionPreset("whole")
     setCustomPortionPercent(100)
     clearMealDraft()
@@ -131,12 +149,16 @@ export default function DashboardPage() {
 
   const headerCopy: Record<string, { title: string; subtitle: string }> = {
     dashboard: {
-      title: "Dashboard",
+      title: userName ? `Hello, ${userName}` : "Dashboard",
       subtitle: "Overview of your current meal and fat totals",
     },
     creator: {
       title: "Meal Creator",
       subtitle: "Search UK foods and build a gallstone-safe meal",
+    },
+    random: {
+      title: "Random Meal Ideas",
+      subtitle: "Get AI recipe inspiration without adding ingredients",
     },
     saved: {
       title: "Saved Safe Meals",
@@ -160,8 +182,15 @@ export default function DashboardPage() {
     currentIngredients,
   }
 
+  function handleWelcomeSubmit(name: string) {
+    saveUserName(name)
+    setUserName(name)
+    setShowWelcome(false)
+  }
+
   return (
     <div className="flex min-h-screen">
+      <WelcomeDialog open={storageReady && showWelcome} onSubmit={handleWelcomeSubmit} />
       <SidebarNav activeTab={activeTab} onTabChange={setActiveTab} />
 
       <div className="flex flex-1 flex-col min-w-0">
@@ -197,6 +226,7 @@ export default function DashboardPage() {
         <main className="flex-1 overflow-y-auto px-4 py-5 md:px-6 md:py-6 pb-24 md:pb-6">
           {activeTab === "dashboard" && (
             <DashboardOverview
+              userName={userName}
               totals={totals}
               fullTotals={fullTotals}
               portionPercent={portionPercent}
@@ -228,9 +258,11 @@ export default function DashboardPage() {
                     selected={selected}
                     cookingFat={cookingFat}
                     digestiveTriggers={digestiveTriggers}
+                    cookingMethod={cookingMethod}
                     onSelectedChange={setSelected}
                     onCookingFatChange={setCookingFat}
                     onDigestiveTriggersChange={setDigestiveTriggers}
+                    onCookingMethodChange={setCookingMethod}
                   />
                 </div>
                 <div className="lg:col-span-1 space-y-5">
@@ -247,6 +279,14 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {activeTab === "random" && (
+            <RandomMealIdeas
+              cookingMethod={cookingMethod}
+              digestiveTriggers={digestiveTriggers}
+              onCookingMethodChange={setCookingMethod}
+            />
+          )}
+
           {activeTab === "saved" && (
             <div className="mx-auto max-w-3xl">
               <SavedMeals {...savedMealsProps} />
@@ -254,80 +294,12 @@ export default function DashboardPage() {
           )}
 
           {activeTab === "settings" && (
-            <div className="mx-auto max-w-xl space-y-4">
-              <SettingsPlaceholder />
+            <div className="mx-auto max-w-xl">
+              <SettingsPanel userName={userName} onUserNameChange={setUserName} />
             </div>
           )}
         </main>
       </div>
-    </div>
-  )
-}
-
-function SettingsPlaceholder() {
-  const [triggerFoods, setTriggerFoods] = useState<string[]>(DEFAULT_TRIGGER_FOODS)
-  const [input, setInput] = useState("")
-  const [storageReady, setStorageReady] = useState(false)
-
-  useEffect(() => {
-    setTriggerFoods(loadTriggerFoods())
-    setStorageReady(true)
-  }, [])
-
-  useEffect(() => {
-    if (!storageReady) return
-    saveTriggerFoods(triggerFoods)
-  }, [triggerFoods, storageReady])
-
-  function addTrigger() {
-    if (input.trim() && !triggerFoods.includes(input.trim())) {
-      setTriggerFoods([...triggerFoods, input.trim()])
-      setInput("")
-    }
-  }
-
-  return (
-    <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
-      <h2 className="font-semibold text-foreground">My Trigger Foods</h2>
-      <p className="text-sm text-muted-foreground leading-relaxed">
-        Record foods that have previously triggered a biliary colic episode so you can avoid them.
-      </p>
-
-      <div className="flex gap-2">
-        <input
-          type="text"
-          placeholder="Add a trigger food..."
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) addTrigger()
-          }}
-          className="flex-1 rounded-xl border border-input bg-background px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        <button
-          onClick={addTrigger}
-          className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          Add
-        </button>
-      </div>
-
-      <ul className="flex flex-wrap gap-2">
-        {triggerFoods.map((food) => (
-          <li key={food}>
-            <button
-              onClick={() => setTriggerFoods(triggerFoods.filter((f) => f !== food))}
-              className="flex items-center gap-1.5 rounded-full bg-[oklch(0.93_0.07_25)] px-3 py-1 text-xs font-medium text-[oklch(0.45_0.18_27)] hover:bg-[oklch(0.88_0.1_25)] transition-colors"
-              aria-label={`Remove ${food} from triggers`}
-            >
-              {food}
-              <span aria-hidden="true">&times;</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <p className="text-xs text-muted-foreground">Click a trigger food chip to remove it.</p>
     </div>
   )
 }

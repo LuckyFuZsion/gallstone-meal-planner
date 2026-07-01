@@ -1,8 +1,11 @@
 'use server'
 
 import Groq from 'groq-sdk'
+import { cookingMethodPromptLine } from '@/lib/cooking-methods'
+import { mealOccasionPrompt } from '@/lib/meal-occasions'
 import type {
   GeneratedRecipe,
+  RecipeContent,
   RecipeGenerationInput,
   RecipeGenerationResponse,
 } from '@/lib/types/recipe'
@@ -25,8 +28,18 @@ Your response must remain a clean, single JSON object matching this structure:
   "substitutionReason": "Swapped 5% Beef Mince for Turkey Mince because...",
   "ingredients": ["Item 1 with exact weight/measurement", "Item 2..."],
   "instructions": ["Step 1...", "Step 2..."],
-  "safetyNote": "Brief explanation of why this recipe is safe for a gallstone flare-up"
-}`
+  "safetyNote": "Brief explanation of why this recipe is safe for a gallstone flare-up",
+  "withoutSubstitution": {
+    "title": "Recipe Name (your ingredients)",
+    "cookTime": "X minutes",
+    "totalFat": "Xg",
+    "ingredients": ["User's original items with exact weights..."],
+    "instructions": ["Steps using original ingredients..."],
+    "safetyNote": "Honest note if fat may exceed 5g with originals"
+  }
+}
+
+When substitutionApplied is true, you MUST include withoutSubstitution — a complete alternate recipe using the user's ORIGINAL ingredients with no swaps. When substitutionApplied is false, omit withoutSubstitution and set substitutionReason to "".`
 
 function getGroqClient(): Groq | null {
   const apiKey = process.env.GROQ_API_KEY?.trim()
@@ -35,6 +48,25 @@ function getGroqClient(): Groq | null {
 }
 
 function buildUserPrompt(input: RecipeGenerationInput): string {
+  if (input.randomOccasion) {
+    const lines: string[] = [mealOccasionPrompt(input.randomOccasion), '']
+
+    const methodLine = cookingMethodPromptLine(input.cookingMethod)
+    if (methodLine) lines.push(methodLine)
+
+    if (input.digestiveTriggers) {
+      lines.push(
+        'Note: prefer gentle, non-irritating options — avoid heavy coffee, spice, or acidic triggers.'
+      )
+    }
+
+    lines.push('')
+    lines.push(
+      'Vary your choice each time — avoid repeating the same dish. Make it taste like comforting home-cooked UK food. Adult portions. Keep total fat per serving at or below 5g. Do not set substitutionApplied to true.'
+    )
+    return lines.join('\n')
+  }
+
   const lines: string[] = [
     'Generate one gallstone-safe recipe using the context below.',
     '',
@@ -67,6 +99,11 @@ function buildUserPrompt(input: RecipeGenerationInput): string {
     )
   }
 
+  const methodLine = cookingMethodPromptLine(input.cookingMethod)
+  if (methodLine) {
+    lines.push(methodLine)
+  }
+
   if (input.mealTotalFat !== undefined) {
     lines.push(`Current tracked meal fat total: ${input.mealTotalFat.toFixed(1)}g.`)
     if (input.mealTotalFat <= 5) {
@@ -88,7 +125,7 @@ function buildUserPrompt(input: RecipeGenerationInput): string {
   return lines.join('\n')
 }
 
-function isGeneratedRecipe(value: unknown): value is GeneratedRecipe {
+function isRecipeContent(value: unknown): value is RecipeContent {
   if (!value || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
   return (
@@ -103,17 +140,46 @@ function isGeneratedRecipe(value: unknown): value is GeneratedRecipe {
   )
 }
 
+function isGeneratedRecipe(value: unknown): value is GeneratedRecipe {
+  if (!isRecipeContent(value)) return false
+  const r = value as Record<string, unknown>
+  if (r.substitutionApplied === true && r.withoutSubstitution !== undefined) {
+    return isRecipeContent(r.withoutSubstitution)
+  }
+  return true
+}
+
 function normalizeRecipe(value: Record<string, unknown>): GeneratedRecipe {
+  const substitutionApplied = value.substitutionApplied === true
+  const withoutSubstitution =
+    substitutionApplied && isRecipeContent(value.withoutSubstitution)
+      ? (value.withoutSubstitution as RecipeContent)
+      : undefined
+
   return {
     title: value.title as string,
     cookTime: value.cookTime as string,
     totalFat: value.totalFat as string,
-    substitutionApplied: value.substitutionApplied === true,
+    substitutionApplied,
     substitutionReason:
       typeof value.substitutionReason === 'string' ? value.substitutionReason : '',
     ingredients: value.ingredients as string[],
     instructions: value.instructions as string[],
     safetyNote: value.safetyNote as string,
+    withoutSubstitution,
+  }
+}
+
+function finalizeRecipe(
+  recipe: GeneratedRecipe,
+  input: RecipeGenerationInput
+): GeneratedRecipe {
+  if (!input.randomOccasion) return recipe
+  return {
+    ...recipe,
+    substitutionApplied: false,
+    substitutionReason: '',
+    withoutSubstitution: undefined,
   }
 }
 
@@ -138,8 +204,8 @@ export async function generateSafeRecipe(
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(input) },
       ],
-      temperature: 0.6,
-      max_tokens: 1024,
+      temperature: input.randomOccasion ? 0.9 : 0.6,
+      max_tokens: 2048,
     })
 
     const raw = completion.choices[0]?.message?.content
@@ -170,7 +236,7 @@ export async function generateSafeRecipe(
       }
     }
 
-    return { success: true, recipe: normalizeRecipe(parsed as Record<string, unknown>) }
+    return { success: true, recipe: finalizeRecipe(normalizeRecipe(parsed as Record<string, unknown>), input) }
   } catch (error) {
     console.error('[generateSafeRecipe]', error)
     return {

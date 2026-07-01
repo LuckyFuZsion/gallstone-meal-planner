@@ -1,12 +1,13 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
-import { Search, Plus, Trash2, Flame, FlameKindling, Loader2, AlertCircle, Coffee, Sparkles } from "lucide-react"
+import { Search, Plus, Trash2, Flame, FlameKindling, Loader2, AlertCircle, Coffee, Sparkles, CookingPot } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { searchFoods } from "@/app/actions/food-search"
 import { getCachedFoodSearch, setCachedFoodSearch } from "@/lib/food-search-cache"
+import { sortFoodItemsByQuery } from "@/lib/open-food-facts/client"
 import { generateSafeRecipe } from "@/app/actions/recipe"
-import { RecipeDisplayCard } from "@/components/recipe-display-card"
+import { RecipeDisplayCard, type SubstitutionChoice } from "@/components/recipe-display-card"
 import {
   COOKING_FAT_GRAMS,
   FAT_THRESHOLD_CAUTION,
@@ -17,7 +18,8 @@ import {
   isHighSugar,
 } from "@/lib/nutrition"
 import type { FoodItem, SelectedFood, ServingMeasurementType } from "@/lib/types/food"
-import type { GeneratedRecipe } from "@/lib/types/recipe"
+import { COOKING_METHOD_OPTIONS } from "@/lib/cooking-methods"
+import type { GeneratedRecipe, CookingMethodPreference } from "@/lib/types/recipe"
 
 export type { SelectedFood as SelectedIngredient }
 
@@ -25,9 +27,11 @@ interface MealCreatorProps {
   selected: SelectedFood[]
   cookingFat: boolean
   digestiveTriggers: boolean
+  cookingMethod: CookingMethodPreference
   onSelectedChange: (items: SelectedFood[]) => void
   onCookingFatChange: (val: boolean) => void
   onDigestiveTriggersChange: (val: boolean) => void
+  onCookingMethodChange: (method: CookingMethodPreference) => void
 }
 
 const MEASUREMENT_OPTIONS: {
@@ -139,9 +143,11 @@ export function MealCreator({
   selected,
   cookingFat,
   digestiveTriggers,
+  cookingMethod,
   onSelectedChange,
   onCookingFatChange,
   onDigestiveTriggersChange,
+  onCookingMethodChange,
 }: MealCreatorProps) {
   const [query, setQuery] = useState("")
   const [open, setOpen] = useState(false)
@@ -151,6 +157,7 @@ export function MealCreator({
   const [hasSearched, setHasSearched] = useState(false)
   const [resultsFromCache, setResultsFromCache] = useState(false)
   const [recipe, setRecipe] = useState<GeneratedRecipe | null>(null)
+  const [substitutionChoice, setSubstitutionChoice] = useState<SubstitutionChoice | null>(null)
   const [isGeneratingRecipe, setIsGeneratingRecipe] = useState(false)
   const [recipeError, setRecipeError] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -171,7 +178,11 @@ export function MealCreator({
     const cached = getCachedFoodSearch(trimmed)
     if (cached) {
       const selectedIds = new Set(selected.map((s) => s.productCode))
-      setResults(cached.filter((food) => !selectedIds.has(food.productCode)))
+      setResults(
+        sortFoodItemsByQuery(cached, trimmed).filter(
+          (food) => !selectedIds.has(food.productCode)
+        )
+      )
       setResultsFromCache(true)
       setIsSearching(false)
       return
@@ -189,7 +200,11 @@ export function MealCreator({
     setCachedFoodSearch(trimmed, response.foods)
 
     const selectedIds = new Set(selected.map((s) => s.productCode))
-    setResults(response.foods.filter((food) => !selectedIds.has(food.productCode)))
+    setResults(
+      sortFoodItemsByQuery(response.foods, trimmed).filter(
+        (food) => !selectedIds.has(food.productCode)
+      )
+    )
     setIsSearching(false)
   }, [selected])
 
@@ -277,6 +292,7 @@ export function MealCreator({
   async function handleGenerateRecipe() {
     setIsGeneratingRecipe(true)
     setRecipeError(null)
+    setSubstitutionChoice(null)
 
     const ingredientPayload = selected.map((item) => {
       const nutrition = computeItemNutrition(item)
@@ -295,6 +311,7 @@ export function MealCreator({
       ingredients: ingredientPayload,
       cookingFat,
       digestiveTriggers,
+      cookingMethod,
       mealTotalFat: mealTotals.totalFat,
     })
 
@@ -306,6 +323,7 @@ export function MealCreator({
     }
 
     setRecipe(response.recipe)
+    setSubstitutionChoice(response.recipe.substitutionApplied ? "pending" : null)
   }
 
   return (
@@ -403,7 +421,7 @@ export function MealCreator({
         {showDropdown && !searchError && results.length > 0 && (
           <ul
             role="listbox"
-            className="mt-1.5 max-h-72 w-full overflow-y-auto rounded-xl border border-border bg-popover shadow-lg"
+            className="mt-1.5 max-h-80 w-full overflow-y-auto rounded-xl border border-border bg-popover shadow-lg"
           >
             {results.map((item) => (
               <li key={item.productCode}>
@@ -667,6 +685,30 @@ export function MealCreator({
         </div>
       )}
 
+      <label className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <CookingPot size={16} className="text-primary shrink-0" aria-hidden="true" />
+          Preferred cooking method
+        </span>
+        <select
+          value={cookingMethod}
+          onChange={(e) =>
+            onCookingMethodChange(e.target.value as CookingMethodPreference)
+          }
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          aria-label="Preferred cooking method for AI recipe"
+        >
+          {COOKING_METHOD_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-muted-foreground leading-snug">
+          {COOKING_METHOD_OPTIONS.find((o) => o.value === cookingMethod)?.hint}
+        </span>
+      </label>
+
       {/* AI Safe-Recipe Generator */}
       <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
         <div className="flex items-start gap-2.5">
@@ -674,8 +716,7 @@ export function MealCreator({
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold text-foreground">AI Safe-Recipe Generator</h3>
             <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-              Uses your current ingredients and meal settings to suggest a low-fat recipe (0–5g fat
-              per serving) powered by Groq.
+              Build a recipe from the ingredients you have added above.
             </p>
           </div>
         </div>
@@ -699,23 +740,30 @@ export function MealCreator({
           ) : (
             <>
               <Sparkles size={16} aria-hidden="true" />
-              Generate Gallstone-Safe Recipe
+              Generate from my ingredients
             </>
           )}
         </button>
-
-        {recipeError && (
-          <p
-            role="alert"
-            className="flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-          >
-            <AlertCircle size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
-            {recipeError}
-          </p>
-        )}
-
-        {recipe && !isGeneratingRecipe && <RecipeDisplayCard recipe={recipe} />}
       </div>
+
+      {recipeError && (
+        <p
+          role="alert"
+          className="flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        >
+          <AlertCircle size={14} className="shrink-0 mt-0.5" aria-hidden="true" />
+          {recipeError}
+        </p>
+      )}
+
+      {recipe && !isGeneratingRecipe && (
+        <RecipeDisplayCard
+          recipe={recipe}
+          substitutionChoice={substitutionChoice}
+          onAcceptSubstitution={() => setSubstitutionChoice("accepted")}
+          onRejectSubstitution={() => setSubstitutionChoice("rejected")}
+        />
+      )}
 
       <p className="text-[11px] text-muted-foreground leading-relaxed">
         Nutrition data from Open Food Facts (UK products). Per-meal targets: under {FAT_THRESHOLD_SAFE}g

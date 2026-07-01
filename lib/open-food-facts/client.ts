@@ -3,7 +3,10 @@ import type { FoodItem, FoodNutritionPer100g } from '@/lib/types/food'
 // v2 /search is tag-filter only; full-text search uses the legacy CGI endpoint.
 const OFF_SEARCH_URL = 'https://world.openfoodfacts.org/cgi/search.pl'
 const USER_AGENT = 'CholiApp - Web - Version 1.0 - Development'
-const PAGE_SIZE = 10
+/** How many products to request from Open Food Facts per search. */
+const FETCH_PAGE_SIZE = 40
+/** How many re-ranked matches to show in the dropdown (scrollable). */
+const RESULT_LIMIT = 25
 
 interface OffNutriments {
   fat_100g?: number
@@ -30,6 +33,70 @@ interface OffProduct {
 
 interface OffSearchResponse {
   products?: OffProduct[]
+}
+
+function normalizeForMatch(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function tokenizeQuery(query: string): string[] {
+  return normalizeForMatch(query).split(' ').filter((t) => t.length > 0)
+}
+
+/** Higher score = closer match to the user's search phrase. */
+export function scoreSearchRelevance(productName: string, query: string): number {
+  const name = normalizeForMatch(productName)
+  const phrase = normalizeForMatch(query)
+  const tokens = tokenizeQuery(query)
+
+  if (!name || !phrase || tokens.length === 0) return 0
+
+  let score = 0
+
+  if (name === phrase) score += 200
+  else if (name.startsWith(phrase)) score += 140
+  else if (name.includes(phrase)) score += 120
+
+  const matchedTokens = tokens.filter((token) => name.includes(token))
+  score += (matchedTokens.length / tokens.length) * 60
+
+  for (const token of tokens) {
+    if (!name.includes(token)) score -= 55
+  }
+
+  if (tokens.length > 1) {
+    const joined = tokens.join(' ')
+    if (name.includes(joined)) score += 45
+
+    const orderedPattern = tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.{0,25}')
+    if (new RegExp(orderedPattern, 'i').test(name)) score += 35
+  }
+
+  // Prefer shorter, specific product names over long ready-meal descriptions.
+  if (matchedTokens.length === tokens.length) {
+    score += Math.max(0, 20 - Math.floor(name.length / 25))
+  }
+
+  return score
+}
+
+function compareSearchResults(a: FoodItem, b: FoodItem, query: string): number {
+  const scoreA = scoreSearchRelevance(a.name, query)
+  const scoreB = scoreSearchRelevance(b.name, query)
+  if (scoreB !== scoreA) return scoreB - scoreA
+  if (a.hasNutrientData !== b.hasNutrientData) {
+    return a.hasNutrientData ? -1 : 1
+  }
+  return a.name.localeCompare(b.name)
+}
+
+export function sortFoodItemsByQuery(items: FoodItem[], query: string): FoodItem[] {
+  return [...items].sort((a, b) => compareSearchResults(a, b, query))
 }
 
 function parseNumeric(value: number | string | undefined): number | null {
@@ -241,7 +308,7 @@ export async function searchOpenFoodFacts(query: string): Promise<FoodItem[]> {
     'fields',
     'code,product_name,brands,nutriments,serving_quantity,product_quantity,product_quantity_unit'
   )
-  url.searchParams.set('page_size', String(PAGE_SIZE))
+  url.searchParams.set('page_size', String(FETCH_PAGE_SIZE))
 
   const response = await fetchOffSearch(url.toString())
 
@@ -256,10 +323,6 @@ export async function searchOpenFoodFacts(query: string): Promise<FoodItem[]> {
   return products
     .map(mapProduct)
     .filter((item) => item.name.length > 0)
-    .sort((a, b) => {
-      if (a.hasNutrientData !== b.hasNutrientData) {
-        return a.hasNutrientData ? -1 : 1
-      }
-      return a.name.localeCompare(b.name)
-    })
+    .sort((a, b) => compareSearchResults(a, b, query))
+    .slice(0, RESULT_LIMIT)
 }

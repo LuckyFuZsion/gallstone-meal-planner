@@ -3,6 +3,7 @@
 import {
   LayoutDashboard,
   ChefHat,
+  Shuffle,
   BookHeart,
   Settings,
   ShieldCheck,
@@ -12,6 +13,7 @@ import { cn } from "@/lib/utils"
 const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", id: "dashboard" },
   { icon: ChefHat, label: "Meal Creator", id: "creator" },
+  { icon: Shuffle, label: "Random Meal Ideas", id: "random", mobileLabel: "Random Ideas" },
   { icon: BookHeart, label: "Saved Meals", id: "saved" },
   { icon: Settings, label: "Settings", id: "settings" },
 ]
@@ -73,29 +75,29 @@ export function SidebarNav({ activeTab, onTabChange }: SidebarNavProps) {
         aria-label="Main navigation"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        {navItems.map(({ icon: Icon, label, id }) => (
-          <button
-            key={id}
-            onClick={() => onTabChange(id)}
-            className={cn(
-              "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-medium transition-colors",
-              activeTab === id
-                ? "text-primary"
-                : "text-sidebar-foreground/50"
-            )}
-            aria-current={activeTab === id ? "page" : undefined}
-          >
-            <Icon
-              size={22}
-              aria-hidden="true"
+          {navItems.map(({ icon: Icon, label, id, mobileLabel }) => (
+            <button
+              key={id}
+              onClick={() => onTabChange(id)}
               className={cn(
-                "transition-transform",
-                activeTab === id && "scale-110"
+                "flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10px] font-medium transition-colors",
+                activeTab === id
+                  ? "text-primary"
+                  : "text-sidebar-foreground/50"
               )}
-            />
-            <span>{label}</span>
-          </button>
-        ))}
+              aria-current={activeTab === id ? "page" : undefined}
+            >
+              <Icon
+                size={22}
+                aria-hidden="true"
+                className={cn(
+                  "transition-transform",
+                  activeTab === id && "scale-110"
+                )}
+              />
+              <span>{mobileLabel ?? label}</span>
+            </button>
+          ))}
       </nav>
     </>
   )

@@ -1,6 +1,6 @@
 import type { FoodItem } from '@/lib/types/food'
 
-const STORAGE_KEY = 'gallsafe-food-search-v1'
+const STORAGE_KEY = 'gallsafe-food-search-v2'
 const MAX_ENTRIES = 80
 
 interface CacheEntry {
